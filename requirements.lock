@@ -41,6 +41,8 @@ idna==3.10
     # via requests
     # via surrealdb
     # via yarl
+ijson==3.3.0
+    # via surreal-import
 markdown-it-py==3.0.0
     # via rich
 marshmallow==3.26.0
