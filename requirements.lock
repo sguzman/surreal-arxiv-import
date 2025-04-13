@@ -41,8 +41,12 @@ idna==3.10
     # via requests
     # via surrealdb
     # via yarl
+markdown-it-py==3.0.0
+    # via rich
 marshmallow==3.26.0
     # via surrealdb
+mdurl==0.1.2
+    # via markdown-it-py
 multidict==6.1.0
     # via aiohttp
     # via surrealdb
@@ -54,10 +58,14 @@ propcache==0.2.1
     # via aiohttp
     # via surrealdb
     # via yarl
+pygments==2.19.1
+    # via rich
 pytz==2024.2
     # via surrealdb
 requests==2.32.3
     # via surrealdb
+rich==14.0.0
+    # via surreal-import
 surrealdb==1.0.3
     # via surreal-import
 typing-extensions==4.12.2
