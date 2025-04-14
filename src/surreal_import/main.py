@@ -18,12 +18,14 @@ log = logging.getLogger("rich")
 # --- End Logging Setup ---
 
 # Function to handle the insertion of a single record
-def insert_record(db, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
+def insert_record(database_url: str, namespace: str, database: str, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
     """
     Inserts a single record into the database.
 
     Args:
-        db: The database connection object.
+        database_url (str): The URL of the SurrealDB instance.
+        namespace (str): The namespace to use in SurrealDB.
+        database (str): The database to use in SurrealDB.
         table_name (str): The name of the table to insert into.
         record (Dict[str, Any]): The record to insert.
         record_number (int): The record number for logging.
@@ -32,19 +34,23 @@ def insert_record(db, table_name: str, record: Dict[str, Any], record_number: in
         bool: True if the insertion was successful, False otherwise.
     """
     try:
-        if not isinstance(record, dict):
-            log.warning(f"Skipping record {record_number}: Item not a dictionary. Type: {type(record)}")
-            return False
+        with Surreal(database_url) as db:
+            db.signin({"username": "root", "password": "root"})
+            db.use(namespace, database)
 
-        log.debug(f"Attempting to insert record {record_number}...")
-        created = db.create(table_name, record)
+            if not isinstance(record, dict):
+                log.warning(f"Skipping record {record_number}: Item not a dictionary. Type: {type(record)}")
+                return False
 
-        if created:
-            log.debug(f"Successfully inserted record {record_number}.")
-            return True
-        else:
-            log.error(f"Failed record {record_number}: db.create did not return success. Snippet: {str(record)[:200]}...")
-            return False
+            log.debug(f"Attempting to insert record {record_number}...")
+            created = db.create(table_name, record)
+
+            if created:
+                log.debug(f"Successfully inserted record {record_number}.")
+                return True
+            else:
+                log.error(f"Failed record {record_number}: db.create did not return success. Snippet: {str(record)[:200]}...")
+                return False
     except Exception as e:
         log.error(f"Error inserting record {record_number}: {e}", exc_info=True)
         log.debug(f"Problematic record snippet: {str(record)[:200]}...")
@@ -52,14 +58,16 @@ def insert_record(db, table_name: str, record: Dict[str, Any], record_number: in
 
 
 # Function to process records in parallel
-def process_records_in_parallel(records: List[Dict[str, Any]], db, table_name: str, max_workers: int = 4):
+def process_records_in_parallel(database_url: str, namespace: str, database: str, table_name: str, records: List[Dict[str, Any]], max_workers: int = 4):
     """
     Processes records in parallel using a thread pool.
 
     Args:
-        records (List[Dict[str, Any]]): The list of records to process.
-        db: The database connection object.
+        database_url (str): The URL of the SurrealDB instance.
+        namespace (str): The namespace to use in SurrealDB.
+        database (str): The database to use in SurrealDB.
         table_name (str): The name of the table to insert into.
+        records (List[Dict[str, Any]]): The list of records to process.
         max_workers (int): The maximum number of worker threads.
     """
     inserted_count = 0
@@ -67,7 +75,7 @@ def process_records_in_parallel(records: List[Dict[str, Any]], db, table_name: s
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_record = {
-            executor.submit(insert_record, db, table_name, record, i + 1): record
+            executor.submit(insert_record, database_url, namespace, database, table_name, record, i + 1): record
             for i, record in enumerate(records)
         }
 
@@ -87,8 +95,7 @@ def process_records_in_parallel(records: List[Dict[str, Any]], db, table_name: s
 # Updated load_and_insert_data function
 def load_and_insert_data(file_path: str, database_url: str, namespace: str, database: str):
     """
-    Loads data by streaming a JSON array using ijson, connects to SurrealDB
-    synchronously using a 'with' statement for connection management,
+    Loads data by streaming a JSON array using ijson, connects to SurrealDB,
     and inserts the data with progress logging.
 
     Args:
@@ -102,37 +109,16 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
     table_name = "arxiv_data"  # Use a consistent table name
 
     try:
-        # --- Database Operations Setup (Synchronous using 'with') ---
-        log.info(f"Connecting to SurrealDB at [cyan]{database_url}[/cyan]...")
-        with Surreal(database_url) as db:
-            log.info("[bold green]Successfully connected[/bold green] to SurrealDB.")
+        # Open the file and stream items
+        with open(file_path, 'rb') as f:
+            parser = ijson.items(f, 'item')  # 'item' targets each element in the array
+            records = list(parser)  # Load all records into memory for parallel processing
 
-            # Sign in using root/root credentials
-            log.info("Signing in with root/root credentials...")
-            try:
-                db.signin({"username": "root", "password": "root"})
-                log.info("[bold green]Authentication successful.[/bold green]")
-            except Exception as e:
-                log.critical(f"Authentication failed: {e}", exc_info=True)
-                return  # Quit if authentication fails
-
-            log.info(f"Using namespace '[yellow]{namespace}[/yellow]' and database '[yellow]{database}[/yellow]'...")
-            db.use(namespace, database)
-            log.info("Namespace and database selected successfully.")
-
-            # --- Streaming Parsing and Insertion ---
-            log.info("Starting data streaming and insertion...")
-
-            # Open the file and stream items
-            with open(file_path, 'rb') as f:
-                parser = ijson.items(f, 'item')  # 'item' targets each element in the array
-                records = list(parser)  # Load all records into memory for parallel processing
-
-            log.info(f"Loaded {len(records)} records. Starting parallel processing...")
-            process_records_in_parallel(records, db, table_name, max_workers=4)
+        log.info(f"Loaded {len(records)} records. Starting parallel processing...")
+        process_records_in_parallel(database_url, namespace, database, table_name, records, max_workers=4)
 
     except Exception as e:
-        log.critical(f"An error occurred during database connection setup: {e}", exc_info=True)
+        log.critical(f"An error occurred during data loading and insertion: {e}", exc_info=True)
 
 
 # Synchronous main function
