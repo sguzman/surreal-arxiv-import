@@ -19,6 +19,10 @@ logging.basicConfig(
 log = logging.getLogger("rich")
 # --- End Logging Setup ---
 
+# --- Global Configuration ---
+LOG_EVERY_N_RECORDS = 100  # Log after every 100 records
+# --- End Configuration ---
+
 def insert_record(database_url: str, namespace: str, database: str, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
     """
     Inserts a single record into the database.
@@ -51,7 +55,6 @@ def insert_record(database_url: str, namespace: str, database: str, table_name: 
             created = db.create(table_name, record)
 
             if created:
-                log.info(f"[Record {record_number}] Successfully inserted.")
                 return True
             else:
                 log.error(f"[Record {record_number}] Failed: db.create did not return success. Snippet: {str(record)[:200]}...")
@@ -94,9 +97,10 @@ def process_records_in_parallel(database_url: str, namespace: str, database: str
             try:
                 if future.result():
                     inserted_count += 1
+                    if inserted_count % LOG_EVERY_N_RECORDS == 0:
+                        log.info(f"[Progress] Inserted {inserted_count} records so far.")
                 else:
                     failed_count += 1
-                    log.warning(f"[Record Processed] Failed to insert: {record}")
             except Exception as e:
                 log.error(f"[Record Processed] Unexpected error: {e}", exc_info=True)
                 failed_count += 1
