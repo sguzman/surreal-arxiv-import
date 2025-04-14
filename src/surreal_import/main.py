@@ -40,8 +40,6 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
     try:
         # --- Database Operations Setup (Synchronous using 'with') ---
         log.info(f"Connecting to SurrealDB at [cyan]{database_url}[/cyan]...")
-        # Use a standard 'with' statement for the synchronous client
-        # This implicitly handles connect/setup and close/teardown
         with Surreal(database_url) as db:
             log.info("[bold green]Successfully connected[/bold green] to SurrealDB.")
 
@@ -55,7 +53,6 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
                 return  # Quit if authentication fails
 
             log.info(f"Using namespace '[yellow]{namespace}[/yellow]' and database '[yellow]{database}[/yellow]'...")
-            # Use synchronous use method within the 'with' block
             db.use(namespace, database)
             log.info("Namespace and database selected successfully.")
 
@@ -66,7 +63,6 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
-                # Removed show_percentage=False from TaskProgressColumn for compatibility
                 TaskProgressColumn(),
                 TextColumn("Processed: {task.completed} | Failed: {task.fields[failed]}"),
                 TimeElapsedColumn(),
@@ -77,7 +73,8 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
                 try:
                     # Open the file and stream items
                     with open(file_path, 'rb') as f:
-                        parser = ijson.items(f, 'item')
+                        # Correctly parse individual items in the JSON array
+                        parser = ijson.items(f, 'item')  # 'item' targets each element in the array
                         for record in parser:
                             processed_count += 1
                             progress.update(task, advance=1, description=f"[cyan]Processing record {processed_count}...[/cyan]")
@@ -120,20 +117,16 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
 
                 # Final update to progress bar
                 current_task = progress.tasks[task]
-                # Check description to see if a fatal error occurred before setting final state
                 if not current_task.description.startswith("[bold red]"):
-                     final_desc = f"[bold green]Streaming finished[/bold green]"
-                     if failed_count > 0:
-                         final_desc += f" ([bold red]{failed_count} failed inserts[/bold red])"
-                     # Set total and completed only if finished normally
-                     progress.update(task, description=final_desc, total=processed_count, completed=processed_count)
+                    final_desc = f"[bold green]Streaming finished[/bold green]"
+                    if failed_count > 0:
+                        final_desc += f" ([bold red]{failed_count} failed inserts[/bold red])"
+                    progress.update(task, description=final_desc, total=processed_count, completed=processed_count)
 
             log.info(f"[bold green]Data processing complete.[/bold green] Processed: [bold green]{processed_count}[/bold green], Inserted: [bold green]{inserted_count}[/bold green], Failed Inserts: [bold {'red' if failed_count > 0 else 'green'}]{failed_count}[/bold {'red' if failed_count > 0 else 'green'}]")
 
     except Exception as e:
-        # Catch errors during the initial 'with Surreal(...)' connection attempt
         log.critical(f"An error occurred during database connection setup: {e}", exc_info=True)
-    # No 'finally' block needed for db.close() as 'with' handles it.
 
 
 # Synchronous main function
