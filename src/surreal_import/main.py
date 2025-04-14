@@ -7,6 +7,8 @@ from surrealdb import Surreal  # Import the Surreal class
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 
+num_core = 16
+
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
@@ -17,7 +19,6 @@ logging.basicConfig(
 log = logging.getLogger("rich")
 # --- End Logging Setup ---
 
-# Function to handle the insertion of a single record
 def insert_record(database_url: str, namespace: str, database: str, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
     """
     Inserts a single record into the database.
@@ -33,37 +34,40 @@ def insert_record(database_url: str, namespace: str, database: str, table_name: 
     Returns:
         bool: True if the insertion was successful, False otherwise.
     """
+    log.info(f"[Record {record_number}] Starting insertion...")
     try:
         with Surreal(database_url) as db:
+            log.debug(f"[Record {record_number}] Connecting to SurrealDB...")
             db.signin({"username": "root", "password": "root"})
+            log.debug(f"[Record {record_number}] Authentication successful.")
             db.use(namespace, database)
+            log.debug(f"[Record {record_number}] Using namespace '{namespace}' and database '{database}'.")
 
             if not isinstance(record, dict):
-                log.warning(f"Skipping record {record_number}: Item not a dictionary. Type: {type(record)}")
+                log.warning(f"[Record {record_number}] Skipping: Item is not a dictionary. Type: {type(record)}")
                 return False
 
-            log.debug(f"Attempting to insert record {record_number}...")
+            log.debug(f"[Record {record_number}] Attempting to insert...")
             created = db.create(table_name, record)
 
             if created:
-                log.debug(f"Successfully inserted record {record_number}.")
+                log.info(f"[Record {record_number}] Successfully inserted.")
                 return True
             else:
-                log.error(f"Failed record {record_number}: db.create did not return success. Snippet: {str(record)[:200]}...")
+                log.error(f"[Record {record_number}] Failed: db.create did not return success. Snippet: {str(record)[:200]}...")
                 return False
     except Exception as e:
         error_message = str(e)
         if "already exists" in error_message:
-            log.warning(f"Duplicate record {record_number}: {error_message}")
+            log.warning(f"[Record {record_number}] Duplicate detected: {error_message}")
             return False  # Treat duplicates as failed inserts but continue
         else:
-            log.error(f"Error inserting record {record_number}: {e}", exc_info=True)
-            log.debug(f"Problematic record snippet: {str(record)[:200]}...")
+            log.error(f"[Record {record_number}] Error: {e}", exc_info=True)
+            log.debug(f"[Record {record_number}] Problematic record snippet: {str(record)[:200]}...")
             return False
 
 
-# Function to process records in parallel
-def process_records_in_parallel(database_url: str, namespace: str, database: str, table_name: str, records: List[Dict[str, Any]], max_workers: int = 4):
+def process_records_in_parallel(database_url: str, namespace: str, database: str, table_name: str, records: List[Dict[str, Any]], max_workers: int = num_core):
     """
     Processes records in parallel using a thread pool.
 
@@ -75,6 +79,7 @@ def process_records_in_parallel(database_url: str, namespace: str, database: str
         records (List[Dict[str, Any]]): The list of records to process.
         max_workers (int): The maximum number of worker threads.
     """
+    log.info(f"Starting parallel processing with {max_workers} workers...")
     inserted_count = 0
     failed_count = 0
 
@@ -85,19 +90,20 @@ def process_records_in_parallel(database_url: str, namespace: str, database: str
         }
 
         for future in as_completed(future_to_record):
+            record = future_to_record[future]
             try:
                 if future.result():
                     inserted_count += 1
                 else:
                     failed_count += 1
+                    log.warning(f"[Record Processed] Failed to insert: {record}")
             except Exception as e:
-                log.error(f"Unexpected error during parallel processing: {e}", exc_info=True)
+                log.error(f"[Record Processed] Unexpected error: {e}", exc_info=True)
                 failed_count += 1
 
     log.info(f"[bold green]Parallel processing complete.[/bold green] Inserted: {inserted_count}, Failed: {failed_count}")
 
 
-# Updated load_and_insert_data function
 def load_and_insert_data(file_path: str, database_url: str, namespace: str, database: str):
     """
     Loads data by streaming a JSON array using ijson, connects to SurrealDB,
@@ -115,18 +121,22 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
 
     try:
         # Open the file and stream items
+        log.info(f"Opening file: {file_path}")
         with open(file_path, 'rb') as f:
             parser = ijson.items(f, 'item')  # 'item' targets each element in the array
             records = list(parser)  # Load all records into memory for parallel processing
 
         log.info(f"Loaded {len(records)} records. Starting parallel processing...")
-        process_records_in_parallel(database_url, namespace, database, table_name, records, max_workers=4)
+        process_records_in_parallel(database_url, namespace, database, table_name, records, max_workers=num_core)
 
+    except FileNotFoundError:
+        log.critical(f"File not found: {file_path}")
+    except ijson.JSONError as e:
+        log.critical(f"JSON parsing error: {e}", exc_info=True)
     except Exception as e:
-        log.critical(f"An error occurred during data loading and insertion: {e}", exc_info=True)
+        log.critical(f"An unexpected error occurred: {e}", exc_info=True)
 
 
-# Synchronous main function
 def main():
     """
     Main function to set parameters and call the data loading and insertion function.
@@ -136,7 +146,9 @@ def main():
     namespace = 'test'
     database = 'test'
 
+    log.info("Starting the data import process...")
     load_and_insert_data(file_path, database_url, namespace, database)
+    log.info("Data import process completed.")
 
 
 if __name__ == "__main__":
