@@ -45,6 +45,15 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
         with Surreal(database_url) as db:
             log.info("[bold green]Successfully connected[/bold green] to SurrealDB.")
 
+            # Sign in using root/root credentials
+            log.info("Signing in with root/root credentials...")
+            try:
+                db.signin({"username": "root", "password": "root"})
+                log.info("[bold green]Authentication successful.[/bold green]")
+            except Exception as e:
+                log.critical(f"Authentication failed: {e}", exc_info=True)
+                return  # Quit if authentication fails
+
             log.info(f"Using namespace '[yellow]{namespace}[/yellow]' and database '[yellow]{database}[/yellow]'...")
             # Use synchronous use method within the 'with' block
             db.use(namespace, database)
