@@ -141,7 +141,7 @@ def main():
     """
     Main function to set parameters and call the data loading and insertion function.
     """
-    file_path = 'arxiv_array.json'
+    file_path = 'arxiv_array_small.json'
     database_url = 'ws://localhost:8000'
     namespace = 'test'
     database = 'test'
