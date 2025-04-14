@@ -7,7 +7,7 @@ from surrealdb import Surreal  # Import the Surreal class
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 
-num_core = 16
+num_core = 32
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -20,7 +20,7 @@ log = logging.getLogger("rich")
 # --- End Logging Setup ---
 
 # --- Global Configuration ---
-LOG_EVERY_N_RECORDS = 100  # Log after every 100 records
+LOG_EVERY_N_RECORDS = 1000  # Log after every 100 records
 # --- End Configuration ---
 
 def insert_record(database_url: str, namespace: str, database: str, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
