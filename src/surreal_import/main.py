@@ -70,50 +70,39 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
             ) as progress:
                 task = progress.add_task(f"[cyan]Streaming from '{file_path}'...", total=None, failed=0)
 
-                try:
-                    # Open the file and stream items
-                    with open(file_path, 'rb') as f:
-                        # Correctly parse individual items in the JSON array
-                        parser = ijson.items(f, 'item')  # 'item' targets each element in the array
-                        for record in parser:
-                            processed_count += 1
-                            progress.update(task, advance=1, description=f"[cyan]Processing record {processed_count}...[/cyan]")
+                # Open the file and stream items
+                with open(file_path, 'rb') as f:
+                    # Correctly parse individual items in the JSON array
+                    parser = ijson.items(f, 'item')  # 'item' targets each element in the array
+                    for record in parser:
+                        processed_count += 1
+                        progress.update(task, advance=1, description=f"[cyan]Processing record {processed_count}...[/cyan]")
 
-                            try:
-                                # Validate record
-                                if not isinstance(record, dict):
-                                    log.warning(f"Skipping record {processed_count}: Item not a dictionary. Type: {type(record)}")
-                                    failed_count += 1
-                                    progress.update(task, failed=failed_count)
-                                    continue
+                        try:
+                            # Validate record
+                            if not isinstance(record, dict):
+                                log.warning(f"Skipping record {processed_count}: Item not a dictionary. Type: {type(record)}")
+                                failed_count += 1
+                                progress.update(task, failed=failed_count)
+                                continue
 
-                                log.debug(f"Attempting to insert record {processed_count}...")
-                                # Use synchronous create method
-                                created = db.create(table_name, record)
+                            log.debug(f"Attempting to insert record {processed_count}...")
+                            # Use synchronous create method
+                            created = db.create(table_name, record)
 
-                                if created:
-                                    inserted_count += 1
-                                    log.debug(f"Successfully inserted record {processed_count}.")
-                                else:
-                                    log.error(f"Failed record {processed_count}: db.create did not return success. Snippet: {str(record)[:200]}...")
-                                    failed_count += 1
-                                    progress.update(task, failed=failed_count)
-
-                            except Exception as e:
-                                log.error(f"Error inserting record {processed_count}: {e}", exc_info=True)
-                                log.debug(f"Problematic record snippet: {str(record)[:200]}...")
+                            if created:
+                                inserted_count += 1
+                                log.debug(f"Successfully inserted record {processed_count}.")
+                            else:
+                                log.error(f"Failed record {processed_count}: db.create did not return success. Snippet: {str(record)[:200]}...")
                                 failed_count += 1
                                 progress.update(task, failed=failed_count)
 
-                except ijson.JSONError as e:
-                    log.error(f"Fatal JSON parsing error near record {processed_count+1}: {e}", exc_info=True)
-                    log.critical("Input file contains invalid JSON.")
-                    progress.update(task, description=f"[bold red]JSON Error after {processed_count} records[/bold red]")
-                except FileNotFoundError:
-                    log.error(f"Error: File not found at [cyan]{file_path}[/cyan]")
-                except Exception as e:
-                    log.critical(f"Unexpected error during streaming/insertion near record {processed_count+1}: {e}", exc_info=True)
-                    progress.update(task, description=f"[bold red]Unexpected Error after {processed_count} records[/bold red]")
+                        except Exception as e:
+                            log.error(f"Error inserting record {processed_count}: {e}", exc_info=True)
+                            log.debug(f"Problematic record snippet: {str(record)[:200]}...")
+                            failed_count += 1
+                            progress.update(task, failed=failed_count)
 
                 # Final update to progress bar
                 current_task = progress.tasks[task]
