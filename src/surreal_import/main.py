@@ -1,11 +1,11 @@
 import json
-import ijson # Import the streaming JSON library
-# import asyncio # Removed asyncio
+import ijson  # Import the streaming JSON library
 import logging
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn
-from surrealdb import Surreal # Import the Surreal class
-# import sys # No longer needed for sys.exit
+from surrealdb import Surreal  # Import the Surreal class
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -17,7 +17,74 @@ logging.basicConfig(
 log = logging.getLogger("rich")
 # --- End Logging Setup ---
 
-# Synchronous function using 'with' for connection management
+# Function to handle the insertion of a single record
+def insert_record(db, table_name: str, record: Dict[str, Any], record_number: int) -> bool:
+    """
+    Inserts a single record into the database.
+
+    Args:
+        db: The database connection object.
+        table_name (str): The name of the table to insert into.
+        record (Dict[str, Any]): The record to insert.
+        record_number (int): The record number for logging.
+
+    Returns:
+        bool: True if the insertion was successful, False otherwise.
+    """
+    try:
+        if not isinstance(record, dict):
+            log.warning(f"Skipping record {record_number}: Item not a dictionary. Type: {type(record)}")
+            return False
+
+        log.debug(f"Attempting to insert record {record_number}...")
+        created = db.create(table_name, record)
+
+        if created:
+            log.debug(f"Successfully inserted record {record_number}.")
+            return True
+        else:
+            log.error(f"Failed record {record_number}: db.create did not return success. Snippet: {str(record)[:200]}...")
+            return False
+    except Exception as e:
+        log.error(f"Error inserting record {record_number}: {e}", exc_info=True)
+        log.debug(f"Problematic record snippet: {str(record)[:200]}...")
+        return False
+
+
+# Function to process records in parallel
+def process_records_in_parallel(records: List[Dict[str, Any]], db, table_name: str, max_workers: int = 4):
+    """
+    Processes records in parallel using a thread pool.
+
+    Args:
+        records (List[Dict[str, Any]]): The list of records to process.
+        db: The database connection object.
+        table_name (str): The name of the table to insert into.
+        max_workers (int): The maximum number of worker threads.
+    """
+    inserted_count = 0
+    failed_count = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_record = {
+            executor.submit(insert_record, db, table_name, record, i + 1): record
+            for i, record in enumerate(records)
+        }
+
+        for future in as_completed(future_to_record):
+            try:
+                if future.result():
+                    inserted_count += 1
+                else:
+                    failed_count += 1
+            except Exception as e:
+                log.error(f"Unexpected error during parallel processing: {e}", exc_info=True)
+                failed_count += 1
+
+    log.info(f"[bold green]Parallel processing complete.[/bold green] Inserted: {inserted_count}, Failed: {failed_count}")
+
+
+# Updated load_and_insert_data function
 def load_and_insert_data(file_path: str, database_url: str, namespace: str, database: str):
     """
     Loads data by streaming a JSON array using ijson, connects to SurrealDB
@@ -32,10 +99,7 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
     """
     log.info(f"Attempting to stream JSON array from: [cyan]{file_path}[/cyan]")
 
-    inserted_count = 0
-    failed_count = 0
-    processed_count = 0
-    table_name = "arxiv_data" # Use a consistent table name
+    table_name = "arxiv_data"  # Use a consistent table name
 
     try:
         # --- Database Operations Setup (Synchronous using 'with') ---
@@ -56,63 +120,16 @@ def load_and_insert_data(file_path: str, database_url: str, namespace: str, data
             db.use(namespace, database)
             log.info("Namespace and database selected successfully.")
 
-            # --- Streaming Parsing and Insertion (inside the 'with' block) ---
+            # --- Streaming Parsing and Insertion ---
             log.info("Starting data streaming and insertion...")
 
-            # Setup progress bar
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                TaskProgressColumn(),
-                TextColumn("Processed: {task.completed} | Failed: {task.fields[failed]}"),
-                TimeElapsedColumn(),
-                transient=False,
-            ) as progress:
-                task = progress.add_task(f"[cyan]Streaming from '{file_path}'...", total=None, failed=0)
+            # Open the file and stream items
+            with open(file_path, 'rb') as f:
+                parser = ijson.items(f, 'item')  # 'item' targets each element in the array
+                records = list(parser)  # Load all records into memory for parallel processing
 
-                # Open the file and stream items
-                with open(file_path, 'rb') as f:
-                    # Correctly parse individual items in the JSON array
-                    parser = ijson.items(f, 'item')  # 'item' targets each element in the array
-                    for record in parser:
-                        processed_count += 1
-                        progress.update(task, advance=1, description=f"[cyan]Processing record {processed_count}...[/cyan]")
-
-                        try:
-                            # Validate record
-                            if not isinstance(record, dict):
-                                log.warning(f"Skipping record {processed_count}: Item not a dictionary. Type: {type(record)}")
-                                failed_count += 1
-                                progress.update(task, failed=failed_count)
-                                continue
-
-                            log.debug(f"Attempting to insert record {processed_count}...")
-                            # Use synchronous create method
-                            created = db.create(table_name, record)
-
-                            if created:
-                                inserted_count += 1
-                                log.debug(f"Successfully inserted record {processed_count}.")
-                            else:
-                                log.error(f"Failed record {processed_count}: db.create did not return success. Snippet: {str(record)[:200]}...")
-                                failed_count += 1
-                                progress.update(task, failed=failed_count)
-
-                        except Exception as e:
-                            log.error(f"Error inserting record {processed_count}: {e}", exc_info=True)
-                            log.debug(f"Problematic record snippet: {str(record)[:200]}...")
-                            failed_count += 1
-                            progress.update(task, failed=failed_count)
-
-                # Final update to progress bar
-                current_task = progress.tasks[task]
-                if not current_task.description.startswith("[bold red]"):
-                    final_desc = f"[bold green]Streaming finished[/bold green]"
-                    if failed_count > 0:
-                        final_desc += f" ([bold red]{failed_count} failed inserts[/bold red])"
-                    progress.update(task, description=final_desc, total=processed_count, completed=processed_count)
-
-            log.info(f"[bold green]Data processing complete.[/bold green] Processed: [bold green]{processed_count}[/bold green], Inserted: [bold green]{inserted_count}[/bold green], Failed Inserts: [bold {'red' if failed_count > 0 else 'green'}]{failed_count}[/bold {'red' if failed_count > 0 else 'green'}]")
+            log.info(f"Loaded {len(records)} records. Starting parallel processing...")
+            process_records_in_parallel(records, db, table_name, max_workers=4)
 
     except Exception as e:
         log.critical(f"An error occurred during database connection setup: {e}", exc_info=True)
@@ -130,5 +147,6 @@ def main():
 
     load_and_insert_data(file_path, database_url, namespace, database)
 
+
 if __name__ == "__main__":
-    main() # Run main synchronously
+    main()  # Run main synchronously
