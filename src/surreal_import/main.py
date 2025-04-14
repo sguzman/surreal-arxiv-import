@@ -52,9 +52,14 @@ def insert_record(database_url: str, namespace: str, database: str, table_name: 
                 log.error(f"Failed record {record_number}: db.create did not return success. Snippet: {str(record)[:200]}...")
                 return False
     except Exception as e:
-        log.error(f"Error inserting record {record_number}: {e}", exc_info=True)
-        log.debug(f"Problematic record snippet: {str(record)[:200]}...")
-        return False
+        error_message = str(e)
+        if "already exists" in error_message:
+            log.warning(f"Duplicate record {record_number}: {error_message}")
+            return False  # Treat duplicates as failed inserts but continue
+        else:
+            log.error(f"Error inserting record {record_number}: {e}", exc_info=True)
+            log.debug(f"Problematic record snippet: {str(record)[:200]}...")
+            return False
 
 
 # Function to process records in parallel
