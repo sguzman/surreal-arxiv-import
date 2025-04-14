@@ -38,7 +38,6 @@ def insert_record(database_url: str, namespace: str, database: str, table_name: 
     Returns:
         bool: True if the insertion was successful, False otherwise.
     """
-    log.info(f"[Record {record_number}] Starting insertion...")
     try:
         with Surreal(database_url) as db:
             log.debug(f"[Record {record_number}] Connecting to SurrealDB...")
